@@ -1,4 +1,183 @@
-Partition/Fragment assignment strategy or algorithm.
+## Partition/Fragment assignment tool
+
+Usage:
+
+```
+> assignment -h
+An assignment tool for partitioning and replicating data across nodes.
+
+Usage: assignment <COMMAND>
+
+Commands:
+  init      Initialize the assignment
+  add       Add a node to the assignment, and reassign partitions
+  remove    Remove a node from the assignment, and reassign partitions
+  validate  Validate the assignment
+  help      Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+
+> assignment init -h
+Initialize the assignment
+
+Usage: assignment init [OPTIONS]
+
+Options:
+  -p, --partitions <PARTITIONS>
+          The number of partitions [default: 60]
+  -r, --replication-factor <REPLICATION_FACTOR>
+          The replication factor [default: 3]
+  -n, --nodes <NODES>
+          The nodes to assign these partitions to, in comma-separated format
+  -o, --output-format <OUTPUT_FORMAT>
+          The output format [default: text] [possible values: json, text]
+  -h, --help
+          Print help
+  -V, --version
+          Print version
+
+
+> assignment remove -h
+Remove a node from the assignment, and reassign partitions
+
+Usage: assignment remove [OPTIONS] --node <NODE> --replication-factor <REPLICATION_FACTOR>
+
+Options:
+  -n, --node <NODE>
+          Node to remove
+  -r, --replication-factor <REPLICATION_FACTOR>
+          The replication factor
+  -i, --input <INPUT>
+          The existing assignment file [default: -]
+  -w, --with-actions
+          Whether to print the actions
+  -o, --output-format <OUTPUT_FORMAT>
+          The output format [default: text] [possible values: json, text]
+  -h, --help
+          Print help
+  -V, --version
+          Print version
+
+
+> assignment add -h
+Add a node to the assignment, and reassign partitions
+
+Usage: assignment add [OPTIONS] --node <NODE> <INPUT>
+
+Arguments:
+  <INPUT>  The existing assignment file
+
+Options:
+  -n, --node <NODE>                    Node to add
+  -w, --with-actions                   Whether to print the actions
+  -o, --output-format <OUTPUT_FORMAT>  The output format [default: text] [possible values: json, text]
+  -h, --help                           Print help
+  -V, --version                        Print version
+
+
+> assignment validate -h
+Validate the assignment
+
+Usage: assignment validate [OPTIONS] --partitions <PARTITIONS> --replication-factor <REPLICATION_FACTOR>
+
+Options:
+  -p, --partitions <PARTITIONS>                  The number of partitions
+  -r, --replication-factor <REPLICATION_FACTOR>  The replication factor
+  -i, --input <INPUT>                            The existing assignment file [default: -]
+  -h, --help                                     Print help
+  -V, --version                                  Print version
+```
+
+For example:
+
+```bash
+> assignment init -p 30 -r 3 -n node_1,node_2,node_3,node_4,node_5
+Partition       Nodes
+----------      ---------
+        1       node_1, node_2, node_3
+        2       node_2, node_3, node_4
+        3       node_3, node_4, node_5
+        4       node_4, node_5, node_1
+        5       node_5, node_1, node_2
+        6       node_1, node_2, node_3
+        7       node_2, node_3, node_4
+        8       node_3, node_4, node_5
+        9       node_4, node_5, node_1
+       10       node_5, node_1, node_2
+       11       node_1, node_2, node_3
+       12       node_2, node_3, node_4
+       13       node_3, node_4, node_5
+       14       node_4, node_5, node_1
+       15       node_5, node_1, node_2
+       16       node_1, node_2, node_3
+       17       node_2, node_3, node_4
+       18       node_3, node_4, node_5
+       19       node_4, node_5, node_1
+       20       node_5, node_1, node_2
+       21       node_1, node_2, node_3
+       22       node_2, node_3, node_4
+       23       node_3, node_4, node_5
+       24       node_4, node_5, node_1
+       25       node_5, node_1, node_2
+       26       node_1, node_2, node_3
+       27       node_2, node_3, node_4
+       28       node_3, node_4, node_5
+       29       node_4, node_5, node_1
+       30       node_5, node_1, node_2
+
+Node     Num    Partitions
+----    ----    ----------
+node_1    18     1,  4,  5,  6,  9, 10, 11, 14, 15, 16, 19, 20, 21, 24, 25, 26, 29, 30
+node_2    18     1,  2,  5,  6,  7, 10, 11, 12, 15, 16, 17, 20, 21, 22, 25, 26, 27, 30
+node_3    18     1,  2,  3,  6,  7,  8, 11, 12, 13, 16, 17, 18, 21, 22, 23, 26, 27, 28
+node_4    18     2,  3,  4,  7,  8,  9, 12, 13, 14, 17, 18, 19, 22, 23, 24, 27, 28, 29
+node_5    18     3,  4,  5,  8,  9, 10, 13, 14, 15, 18, 19, 20, 23, 24, 25, 28, 29, 30
+upper: 18, lower: 18, Differ: 0
+```
+
+Or you can output the result in JSON:
+
+```bash
+> assignment init -p 30 -r 3 -n node_1,node_2,node_3,node_4,node_5 -o json | jq 'to_entries.[]' -c
+{"key":"1","value":["node_1","node_2","node_3"]}
+{"key":"2","value":["node_2","node_3","node_4"]}
+{"key":"3","value":["node_3","node_4","node_5"]}
+{"key":"4","value":["node_4","node_5","node_1"]}
+{"key":"5","value":["node_5","node_1","node_2"]}
+{"key":"6","value":["node_1","node_2","node_3"]}
+{"key":"7","value":["node_2","node_3","node_4"]}
+{"key":"8","value":["node_3","node_4","node_5"]}
+{"key":"9","value":["node_4","node_5","node_1"]}
+{"key":"10","value":["node_5","node_1","node_2"]}
+{"key":"11","value":["node_1","node_2","node_3"]}
+{"key":"12","value":["node_2","node_3","node_4"]}
+{"key":"13","value":["node_3","node_4","node_5"]}
+{"key":"14","value":["node_4","node_5","node_1"]}
+{"key":"15","value":["node_5","node_1","node_2"]}
+{"key":"16","value":["node_1","node_2","node_3"]}
+{"key":"17","value":["node_2","node_3","node_4"]}
+{"key":"18","value":["node_3","node_4","node_5"]}
+{"key":"19","value":["node_4","node_5","node_1"]}
+{"key":"20","value":["node_5","node_1","node_2"]}
+{"key":"21","value":["node_1","node_2","node_3"]}
+{"key":"22","value":["node_2","node_3","node_4"]}
+{"key":"23","value":["node_3","node_4","node_5"]}
+{"key":"24","value":["node_4","node_5","node_1"]}
+{"key":"25","value":["node_5","node_1","node_2"]}
+{"key":"26","value":["node_1","node_2","node_3"]}
+{"key":"27","value":["node_2","node_3","node_4"]}
+{"key":"28","value":["node_3","node_4","node_5"]}
+{"key":"29","value":["node_4","node_5","node_1"]}
+{"key":"30","value":["node_5","node_1","node_2"]}
+
+> assignment init -p 30 -r 3 -n node_1,node_2,node_3,node_4,node_5 -o json > a1.json
+> cat a1.json | assignment remove -n node_4 -r 3
+```
+
+## Partition/Fragment assignment strategy or algorithm.
 
 A round-robin strategy is enough for a newly created table to balance the distribution.
 

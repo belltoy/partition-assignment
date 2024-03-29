@@ -1,53 +1,142 @@
+use std::num::{NonZeroU8, NonZeroUsize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use clap::{Parser, Subcommand};
+use clap_stdin::FileOrStdin;
+use serde::{Deserialize, Serialize};
+use log::debug;
+use anyhow::Error;
+use anyhow::{bail, Result};
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
-struct Node(u16);
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+struct Node(String);
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 struct Partition(u16);
 
-type Assignment = BTreeMap<Partition, Vec<Node>>;
+// type Assignment = BTreeMap<Partition, Vec<Node>>;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Assignment(BTreeMap<Partition, Vec<Node>>);
 
-macro_rules! debug {
-    ($($e:expr),*) => {
-        println!("    [DEBUG] {}", format!($($e),*));
-    };
-    ($fmt:expr, $($arg:expr),*) => {
-        println!("    [DEBUG] {}", format!($fmt, $($arg),*));
-    };
+#[derive(Debug, Parser)]
+#[command(author, version, about, long_about = None)]
+#[command(propagate_version = true)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
 }
 
-fn main() {
-    let replication_factor = 3;
-    let partitions = 60;
-    let nodes: Vec<_> = (1..=8).map(|n| Node(n)).collect();
-
-    let assignment = init(nodes, partitions, replication_factor);
-    println!("\n==== Initialized Assignment: ====");
-    print_partitions(&assignment, None);
-
-    // Remove Node(5) and reassignment
-    let remove = Node(2);
-    let (assignment, moves) = remove_node(&assignment, &remove, replication_factor);
-    println!("\n==== After {:?} removed: ====\nMoves: {}", remove, moves);
-    print_partitions(&assignment, None);
-
-    // Remove Node(4) and reassignment
-    let remove = Node(4);
-    let (assignment, moves) = remove_node(&assignment, &remove, replication_factor);
-    println!("\n==== After {:?} removed: ====\nMoves: {}", remove, moves);
-    print_partitions(&assignment, None);
-
-    // Add a new Node(6) and reassignment
-    // TODO: Add node
-
+#[derive(Debug, Clone, Deserialize, clap::ValueEnum)]
+enum OutputFormat {
+    Json,
+    Text,
 }
 
-fn init(nodes: Vec<Node>, partitions: usize, replication_factor: usize)
-    -> Assignment
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Initialize the assignment
+    Init {
+        /// The number of partitions
+        #[arg(short, long, default_value = "60")]
+        partitions: NonZeroUsize,
+
+        /// The replication factor
+        #[arg(short, long, default_value = "3")]
+        replication_factor: NonZeroU8,
+
+        /// The nodes to assign these partitions to, in comma-separated format
+        #[arg(short, long, value_delimiter = ',')]
+        nodes: Vec<Node>,
+
+        /// The output format
+        #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
+        output_format: OutputFormat,
+    },
+
+    /// Add a node to the assignment, and reassign partitions
+    Add {
+        /// Node to add
+        #[arg(short, long)]
+        node: Node,
+
+        /// The existing assignment file
+        input: FileOrStdin,
+
+        /// Whether to print the actions
+        #[arg(short, long, default_value = "false")]
+        with_actions: bool,
+
+        /// The output format
+        #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
+        output_format: OutputFormat,
+    },
+
+    /// Remove a node from the assignment, and reassign partitions
+    Remove {
+        /// Node to remove
+        #[arg(short, long)]
+        node: Node,
+
+        /// The replication factor
+        #[arg(short, long)]
+        replication_factor: NonZeroU8,
+
+        /// The existing assignment file
+        #[arg(short, long, default_value = "-")]
+        input: FileOrStdin<Assignment>,
+
+        /// Whether to print the actions
+        #[arg(short, long, default_value = "false")]
+        with_actions: bool,
+
+        /// The output format
+        #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
+        output_format: OutputFormat,
+    },
+
+    /// Validate the assignment
+    Validate {
+        /// The number of partitions
+        #[arg(short, long)]
+        partitions: NonZeroUsize,
+
+        /// The replication factor
+        #[arg(short, long)]
+        replication_factor: NonZeroU8,
+
+        /// The existing assignment file
+        #[arg(short, long, default_value = "-")]
+        input: FileOrStdin,
+    },
+}
+
+#[derive(Debug, Serialize)]
+struct Output {
+    assignment: Assignment,
+
+    // #[serde(skip_serializing_if = "Option::is_none")]
+    actions: Option<Vec<Action>>,
+}
+
+#[derive(Debug, Serialize)]
+struct Action {
+    partition: Partition,
+    from: Node,
+    to: Node,
+}
+
+fn main() -> Result<()> {
+    pretty_env_logger::init();
+    let cli = Cli::parse();
+    cli.command.exec()?;
+
+    Ok(())
+}
+
+fn init(nodes: &[Node], partitions: usize, replication_factor: usize) -> Assignment
 {
-    let n = nodes.into_iter().cycle()
+    let n = nodes.iter().cycle()
         .take(partitions * replication_factor)
+        .cloned()
         .collect::<Vec<_>>();
 
     let assignment = n.windows(replication_factor)
@@ -59,26 +148,22 @@ fn init(nodes: Vec<Node>, partitions: usize, replication_factor: usize)
     balance_boundary(assignment, 0).0
 }
 
-fn remove_node(
-    assignment: &Assignment,
-    remove: &Node,
-    replication_factor: usize,
-)
-    -> (Assignment, usize)
+fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize)
+    -> Result<(Assignment, usize)>
 {
     let mut moves = 0;
 
-    if !assignment.iter().any(|(_p, ns)| ns.contains(&remove)) {
-        panic!("Node {:?} is not contained in the assignment", remove);
+    if !assignment.0.iter().any(|(_p, ns)| ns.contains(&remove)) {
+        bail!("Node '{}' is not contained in the assignment", remove.0);
     }
 
-    let current_nodes = assignment.values().flatten().collect::<BTreeSet<_>>();
+    let current_nodes = assignment.0.values().flatten().collect::<BTreeSet<_>>();
     if current_nodes.len() <= replication_factor {
-        panic!("NO less nodes then the replication factor");
+        bail!("NO less nodes then the replication factor");
     }
 
     // partitions_on_remove: Partition => [Node]
-    let partitions_on_remove = assignment
+    let partitions_on_remove = assignment.0
         .iter()
         .filter(|(_p, ns)| ns.contains(&remove))
         .map(|(p, ns)| {
@@ -91,7 +176,7 @@ fn remove_node(
         })
         .collect::<BTreeMap<_, _>>();
 
-    let mut remains: Assignment = assignment
+    let mut remains: Assignment = assignment.0
         .iter()
         .map(|(p, ns)| {
             let ns = ns.into_iter().filter(|n| n != &remove).cloned().collect::<Vec<_>>();
@@ -101,7 +186,7 @@ fn remove_node(
 
     // transform remains to Node => Set(partitions)
     let mut remains_nodes: BTreeMap<Node, BTreeSet<_>> = Default::default();
-    for (p, ns) in assignment {
+    for (p, ns) in &assignment.0 {
         for n in ns {
             if n != remove {
                 let v = remains_nodes.entry(n.clone()).or_default();
@@ -142,11 +227,12 @@ fn remove_node(
         sum_ns2.cmp(&sum_ns1)
     });
 
-    // debug!("groups len: {}", groups.len());
+    debug!("groups len: {}", groups.len());
     while let Some((mut group_key, mut pps)) = groups.pop() {
         let mut f: Vec<(Partition, Vec<Node>)> = Default::default();
         while let Some((_p, _ns)) = pps.first() {
-            // debug!("======== group_key {:?} ========", group_key);
+            debug!("======== group_key {:?} ========", group_key);
+
             group_key.sort_by(|(_n1, len1), (_n2, len2)| {
                 len1.cmp(&len2)
             });
@@ -155,31 +241,37 @@ fn remove_node(
 
             if upper == lower {
                 // cycle
-                let rest = group_key.iter().map(|(n, _len)| n).cycle().take(pps.len()).zip(pps).map(|(n, (p, ns))| {
-                    let mut ns = ns.clone();
-                    ns.push(n.clone());
-                    moves += 1;
-                    (p.clone(), ns)
-                });
+                let rest = group_key
+                    .iter()
+                    .map(|(n, _len)| n)
+                    .cycle()
+                    .take(pps.len())
+                    .zip(pps)
+                    .map(|(n, (p, ns))| {
+                        let mut ns = ns.clone();
+                        ns.push(n.clone());
+                        moves += 1;
+                        (p.clone(), ns)
+                    });
 
                 f.extend(rest);
 
                 // update rest groups
-                remains = remains.into_iter()
+                remains = remains.0.into_iter()
                     .filter(|(_p, ns)| !ns.contains(remove))
                     .chain(f.into_iter()).collect();
 
                 break;
             } else {
                 let (p, ns) = pps.remove(0);
-                // debug!(">>> pick: {:?}", group_key.first().unwrap());
+                debug!(">>> pick: {:?}", group_key.first().unwrap());
                 moves += 1;
                 group_key.first_mut().unwrap().1 += 1;
                 let mut ns = ns.clone();
                 ns.push(group_key.first().unwrap().0.clone());
 
                 // update rest groups
-                remains = remains.into_iter()
+                remains = remains.0.into_iter()
                     .filter(|(_p, ns)| !ns.contains(remove))
                     .chain(Some((p.clone(), ns.clone())).into_iter()).collect();
             }
@@ -189,12 +281,12 @@ fn remove_node(
 
     // If upper bound - lower bound > 1, then need to reassign, just move a partition from
     // the node with the most partitions to the node with the least partitions.
-    balance_boundary(remains, moves)
+    Ok(balance_boundary(remains, moves))
 }
 
 fn balance_boundary(mut assignment: Assignment, mut moves: usize) -> (Assignment, usize) {
     let mut nodes_map: HashMap<Node, Vec<&Partition>> = Default::default();
-    for (p, ns) in &assignment {
+    for (p, ns) in &assignment.0 {
         for n in ns {
             let v = nodes_map.entry(n.clone()).or_default();
             v.push(p);
@@ -218,7 +310,7 @@ fn balance_boundary(mut assignment: Assignment, mut moves: usize) -> (Assignment
         if !lower.1.contains(&p) {
             // move p from upper to lower
             debug!("Move partition {} from upper bound node {} to lower bound node {}", p.0, upper.0.0, lower.0.0);
-            assignment.entry(p.clone()).and_modify(|ns| {
+            assignment.0.entry(p.clone()).and_modify(|ns| {
                 for n in ns {
                     if n.0 == upper.0.0 {
                         moves += 1;
@@ -235,7 +327,7 @@ fn balance_boundary(mut assignment: Assignment, mut moves: usize) -> (Assignment
 
 fn cal_groups(assignment: &Assignment, groups: &mut Vec<(Vec<(Node, usize)>, Vec<(Partition, Vec<Node>)>)>) {
     let mut remains_nodes: BTreeMap<Node, Vec<_>> = Default::default();
-    for (p, ns) in assignment {
+    for (p, ns) in &assignment.0 {
         for n in ns {
             let v = remains_nodes.entry(n.clone()).or_default();
             v.push(p.clone());
@@ -293,4 +385,134 @@ fn print_partitions<'a, I>(partitions: I, prefix: Option<&str>)
     }
 
     println!("{prefix}upper: {}, lower: {}, Differ: {}", upper, lower, upper - lower);
+}
+
+impl Command {
+    fn validate(&self) -> Result<(), Error> {
+        match self {
+            Self::Init { partitions, replication_factor, nodes, .. } => {
+                if partitions.get() == 0 {
+                    bail!("Partitions must not be zero");
+                }
+
+                if nodes.is_empty() {
+                    bail!("Nodes must not be empty");
+                }
+
+                if nodes.len() < replication_factor.get() as usize {
+                    bail!("Nodes must be greater than or equal to replication factor");
+                }
+            }
+            Self::Add { .. } => {}
+            Self::Remove { .. } => {
+                // Don't read the input file here, as it will be read in exec()
+            }
+            Self::Validate { .. } => {}
+        }
+
+        Ok(())
+    }
+
+    fn exec(self) -> Result<()> {
+        self.validate()?;
+
+        match self {
+            Self::Init { partitions, replication_factor, nodes, output_format } => {
+                let assignment = init(&nodes[..], partitions.get(), replication_factor.get() as usize);
+                match output_format {
+                    OutputFormat::Json => {
+                        println!("{}", serde_json::to_string_pretty(&assignment)?);
+                    }
+                    OutputFormat::Text => {
+                        println!("==== Initialized Assignment: ====");
+                        assignment.print();
+                    }
+                }
+            }
+            Self::Add { .. } => {
+                todo!("Add TODO");
+            }
+            Self::Remove { node, input, replication_factor, with_actions, output_format } => {
+                let assignment = input.contents()?;
+                assignment.validate(replication_factor.get() as usize)?;
+                assignment.ensure_contains_node(&node)?;
+                let (new_assignment, moves) = remove_node(&assignment, &node, replication_factor.get() as usize)?;
+                match output_format {
+                    OutputFormat::Json => {
+                        if with_actions {
+                            let out = Output {
+                                assignment: new_assignment,
+                                actions: vec![].into(),
+                            };
+                            println!("{}", serde_json::to_string_pretty(&out)?);
+                        } else {
+                            println!("{}", serde_json::to_string_pretty(&new_assignment)?);
+                        }
+                    }
+                    OutputFormat::Text => {
+                        println!("==== After remove node: {}, Assignment: ====", &node.0);
+                        new_assignment.print();
+                        println!("Moves: {}", moves);
+                    }
+                }
+            }
+            Self::Validate { .. } => {
+                todo!("Validate TODO");
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl<S: std::fmt::Display> From<S> for Node {
+    fn from(s: S) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl FromIterator<(Partition, Vec<Node>)> for Assignment {
+    fn from_iter<T: IntoIterator<Item = (Partition, Vec<Node>)>>(iter: T) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
+impl std::str::FromStr for Assignment {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let assignment: Assignment = serde_json::from_str(s)?;
+        Ok(assignment)
+    }
+}
+
+impl Assignment {
+    fn validate(&self, replication_factor: usize) -> Result<()> {
+        if self.0.is_empty() {
+            bail!("Assignment must not be empty");
+        }
+
+        let nodes = self.0.values().flatten().collect::<BTreeSet<_>>();
+        if nodes.len() < replication_factor {
+            bail!("Nodes must be greater than or equal to replication factor");
+        }
+
+        Ok(())
+    }
+
+    fn contains_node(&self, node: &Node) -> bool {
+        self.0.iter().any(|(_p, ns)| ns.contains(node))
+    }
+
+    fn ensure_contains_node(&self, node: &Node) -> Result<()> {
+        if !self.contains_node(node) {
+            bail!("Node '{}' is not contained in the assignment", node.0);
+        }
+
+        Ok(())
+    }
+
+    fn print(&self) {
+        print_partitions(&self.0, None);
+    }
 }
