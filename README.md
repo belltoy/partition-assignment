@@ -177,6 +177,41 @@ Or you can output the result in JSON:
 > cat a1.json | assignment remove -n node_4 -r 3
 ```
 
+## JSON Output Format
+
+```json
+{
+  "1": [ "node_1", "node_2", "node_3" ],
+  "2": [ "node_2", "node_3", "node_4" ],
+  "3": [ "node_3", "node_4", "node_5" ],
+  "4": [ "node_4", "node_5", "node_1" ],
+  "5": [ "node_5", "node_1", "node_2" ],
+  "6": [ "node_1", "node_2", "node_3" ],
+  "7": [ "node_2", "node_3", "node_4" ],
+  "8": [ "node_3", "node_4", "node_5" ],
+  "9": [ "node_4", "node_5", "node_1" ],
+  "10": [ "node_5", "node_1", "node_2" ]
+}
+```
+
+Convert to Erlang format:
+
+```bash
+> assignment init -p 30 -r 3 -n node_1,node_2,node_3,node_4,node_5 -o json | jq 'to_entries | map({frag_index: .key, instances: .value})'
+[
+  { "frag_index": "1", "instances": [ "node_1", "node_2", "node_3" ] },
+  { "frag_index": "2", "instances": [ "node_2", "node_3", "node_4" ] },
+  { "frag_index": "3", "instances": [ "node_3", "node_4", "node_5" ] },
+  { "frag_index": "4", "instances": [ "node_4", "node_5", "node_1" ] },
+  { "frag_index": "5", "instances": [ "node_5", "node_1", "node_2" ] },
+  { "frag_index": "6", "instances": [ "node_1", "node_2", "node_3" ] },
+  { "frag_index": "7", "instances": [ "node_2", "node_3", "node_4" ] },
+  { "frag_index": "8", "instances": [ "node_3", "node_4", "node_5" ] },
+  { "frag_index": "9", "instances": [ "node_4", "node_5", "node_1" ] },
+  { "frag_index": "10", "instances": [ "node_5", "node_1", "node_2" ] }
+]
+```
+
 ## Partition/Fragment assignment strategy or algorithm.
 
 A round-robin strategy is enough for a newly created table to balance the distribution.
