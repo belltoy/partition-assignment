@@ -28,14 +28,14 @@ fn main() {
 
     // Remove Node(5) and reassignment
     let remove = Node(2);
-    let assignment = remove_node(&assignment, &remove, replication_factor);
-    println!("\n==== After {:?} removed: ====", remove);
+    let (assignment, moves) = remove_node(&assignment, &remove, replication_factor);
+    println!("\n==== After {:?} removed: ====\nMoves: {}", remove, moves);
     print_partitions(&assignment, None);
 
     // Remove Node(4) and reassignment
     let remove = Node(4);
-    let assignment = remove_node(&assignment, &remove, replication_factor);
-    println!("\n==== After {:?} removed: ====", remove);
+    let (assignment, moves) = remove_node(&assignment, &remove, replication_factor);
+    println!("\n==== After {:?} removed: ====\nMoves: {}", remove, moves);
     print_partitions(&assignment, None);
 
     // Add a new Node(6) and reassignment
@@ -56,7 +56,7 @@ fn init(nodes: Vec<Node>, partitions: usize, replication_factor: usize)
         .map(|(i, nodes)| (Partition(i as u16 + 1), Vec::from(nodes)))
         .collect();
 
-    balance_boundary(assignment)
+    balance_boundary(assignment, 0).0
 }
 
 fn remove_node(
@@ -64,8 +64,10 @@ fn remove_node(
     remove: &Node,
     replication_factor: usize,
 )
-    -> Assignment
+    -> (Assignment, usize)
 {
+    let mut moves = 0;
+
     if !assignment.iter().any(|(_p, ns)| ns.contains(&remove)) {
         panic!("Node {:?} is not contained in the assignment", remove);
     }
@@ -89,9 +91,6 @@ fn remove_node(
         })
         .collect::<BTreeMap<_, _>>();
 
-    debug!("======== partitions_on_remove: =====");
-    print_partitions(&partitions_on_remove, Some("    [DEBUG] "));
-
     let mut remains: Assignment = assignment
         .iter()
         .map(|(p, ns)| {
@@ -99,8 +98,6 @@ fn remove_node(
             (p.clone(), ns.clone())
         })
         .collect();
-    // debug!("==== remains: =====");
-    // print_partitions(&remains, Some("    [DEBUG] "));
 
     // transform remains to Node => Set(partitions)
     let mut remains_nodes: BTreeMap<Node, BTreeSet<_>> = Default::default();
@@ -112,12 +109,6 @@ fn remove_node(
             }
         }
     }
-    // dbg!(&remains_nodes);
-    debug!(" ======= remains_nodes: =======");
-    remains_nodes.iter().for_each(|(n, ps)| {
-        let pss = ps.iter().map(|p| format!("{:>2}", p.0)).collect::<Vec<_>>().join(", ");
-        debug!("Node: {:>2}, partitions ({}): {}", n.0, ps.len(), pss);
-    });
 
     // Group by alternatives for these partitions
     let mut groups: HashMap<_, Vec<(_, _)>> = Default::default();
@@ -133,10 +124,6 @@ fn remove_node(
     }
 
     let px = px.iter().map(|(n, ps)| (n, ps.len())).collect::<HashMap<_, _>>();
-    // debug!("======= px: =====");
-    // px.iter().for_each(|(n, len)| {
-    //     debug!("Node: {}, partitions: {}", n.0, len);
-    // });
 
     for (p, ns) in &partitions_on_remove {
         let alters = remains_nodes
@@ -148,28 +135,12 @@ fn remove_node(
         v.push((p.clone(), ns.clone()));
     }
 
-    // debug!("======= groups: ======");
-    // groups.iter().for_each(|(alters, p_ns)| {
-    //     debug!("alters: {}", alters.iter().map(|(n, len)| format!("Node: {}({})", n.0, len)).collect::<Vec<_>>().join(", "));
-    //     for (p, ns) in p_ns {
-    //         debug!("    par: {}, nodes: {:?}", p.0, ns);
-    //     }
-    // });
-
     let mut groups = groups.into_iter().collect::<Vec<_>>();
     groups.sort_by(|(ns1, _), (ns2, _)| {
         let sum_ns1 = ns1.iter().map(|(n, _)| px.get(&n).unwrap_or(&0)).sum::<usize>();
         let sum_ns2 = ns2.iter().map(|(n, _)| px.get(&n).unwrap_or(&0)).sum::<usize>();
         sum_ns2.cmp(&sum_ns1)
     });
-
-    // debug!("===================== sorted groups ======================");
-    // groups.iter().for_each(|(alters, p_ns)| {
-    //     debug!("alters: {}", alters.iter().map(|(n, len)| format!("Node: {}({})", n.0, len)).collect::<Vec<_>>().join(", "));
-    //     for (p, ns) in p_ns {
-    //         debug!("    par: {}, nodes: {:?}", p.0, ns);
-    //     }
-    // });
 
     // debug!("groups len: {}", groups.len());
     while let Some((mut group_key, mut pps)) = groups.pop() {
@@ -182,40 +153,27 @@ fn remove_node(
             let upper = group_key.last().unwrap().1;
             let lower = group_key.first().unwrap().1;
 
-            // debug!(">>> upper: {}, lower: {}, group: {:?}", upper, lower, &group_key);
-
             if upper == lower {
-                // debug!(">>> cycle, group: {:?}, pps len: {}", &group_key, pps.len());
-
                 // cycle
                 let rest = group_key.iter().map(|(n, _len)| n).cycle().take(pps.len()).zip(pps).map(|(n, (p, ns))| {
                     let mut ns = ns.clone();
                     ns.push(n.clone());
+                    moves += 1;
                     (p.clone(), ns)
                 });
 
                 f.extend(rest);
 
-                // for (p, ns) in &f {
-                //     debug!(">>>f: p: {}, ns: {:?}", p.0, ns);
-                // }
-                //
-                // debug!(">>> f len: {}", f.len());
-
-                // debug!("========= before : {}", remains.len());
-                // print_partitions(&remains, Some("    [DEBUG] "));
-
                 // update rest groups
                 remains = remains.into_iter()
                     .filter(|(_p, ns)| !ns.contains(remove))
                     .chain(f.into_iter()).collect();
-                // debug!("========= after : {}", remains.len());
-                // print_partitions(&remains, Some("    [DEBUG] "));
 
                 break;
             } else {
                 let (p, ns) = pps.remove(0);
-                debug!(">>> pick: {:?}", group_key.first().unwrap());
+                // debug!(">>> pick: {:?}", group_key.first().unwrap());
+                moves += 1;
                 group_key.first_mut().unwrap().1 += 1;
                 let mut ns = ns.clone();
                 ns.push(group_key.first().unwrap().0.clone());
@@ -227,15 +185,14 @@ fn remove_node(
             }
         }
         cal_groups(&remains, &mut groups);
-        debug!("groups len: {}", groups.len());
     }
 
     // If upper bound - lower bound > 1, then need to reassign, just move a partition from
     // the node with the most partitions to the node with the least partitions.
-    balance_boundary(remains)
+    balance_boundary(remains, moves)
 }
 
-fn balance_boundary(mut assignment: Assignment) -> Assignment {
+fn balance_boundary(mut assignment: Assignment, mut moves: usize) -> (Assignment, usize) {
     let mut nodes_map: HashMap<Node, Vec<&Partition>> = Default::default();
     for (p, ns) in &assignment {
         for n in ns {
@@ -250,7 +207,7 @@ fn balance_boundary(mut assignment: Assignment) -> Assignment {
     });
 
     if nodes.last().unwrap().1.len() - nodes.first().unwrap().1.len() <= 1 {
-        return assignment;
+        return (assignment, moves);
     }
 
     // find a partition on the upper bound node but the lower bound node doesn't have
@@ -264,15 +221,16 @@ fn balance_boundary(mut assignment: Assignment) -> Assignment {
             assignment.entry(p.clone()).and_modify(|ns| {
                 for n in ns {
                     if n.0 == upper.0.0 {
+                        moves += 1;
                         *n = lower.0.clone();
                     }
                 }
             });
-            return balance_boundary(assignment);
+            return balance_boundary(assignment, moves);
         }
     }
 
-    assignment
+    (assignment, moves)
 }
 
 fn cal_groups(assignment: &Assignment, groups: &mut Vec<(Vec<(Node, usize)>, Vec<(Partition, Vec<Node>)>)>) {
@@ -296,6 +254,9 @@ fn print_partitions<'a, I>(partitions: I, prefix: Option<&str>)
 {
     let prefix = prefix.unwrap_or("");
 
+    let mut upper = usize::MIN;
+    let mut lower = usize::MAX;
+
     println!("{prefix}Partition\tNodes");
     println!("{prefix}----------\t---------");
     for (p, ns) in partitions.clone() {
@@ -316,6 +277,14 @@ fn print_partitions<'a, I>(partitions: I, prefix: Option<&str>)
     println!("{prefix}\n{prefix}Node\t Num\tPartitions");
     println!("{prefix}----\t----\t----------");
     for (n, ps) in &nodes {
+        let ps_len = ps.len();
+        if ps_len > upper {
+            upper = ps_len;
+        }
+        if ps_len < lower {
+            lower = ps_len;
+        }
+
         println!("{prefix}{:>4}\t{:>4}\t{}",
           n.0,
           ps.len(),
@@ -323,35 +292,5 @@ fn print_partitions<'a, I>(partitions: I, prefix: Option<&str>)
             .map(|p| format!("{:>2}", p.0)).collect::<Vec<_>>().join(", "));
     }
 
-    let i = nodes.iter().map(|(_n, ps)| ps.len() as f64);
-    let std_dev1 = std_dev(i);
-    println!("{prefix}std_dev: {:.2}", std_dev1);
-}
-
-use std::borrow::Borrow;
-fn variance(i: impl IntoIterator<Item = f64>) -> f64 {
-    let mut iter = i.into_iter();
-    let mut sum = match iter.next() {
-        None => f64::NAN,
-        Some(x) => *x.borrow(),
-    };
-    let mut i = 1.0;
-    let mut variance = 0.0;
-
-    for x in iter {
-        i += 1.0;
-        let borrow = *x.borrow();
-        sum += borrow;
-        let diff = i * borrow - sum;
-        variance += diff * diff / (i * (i - 1.0))
-    }
-    if i > 1.0 {
-        variance / (i - 1.0)
-    } else {
-        f64::NAN
-    }
-}
-
-fn std_dev(i: impl IntoIterator<Item = f64>) -> f64 {
-    variance(i).sqrt()
+    println!("{prefix}upper: {}, lower: {}, Differ: {}", upper, lower, upper - lower);
 }
