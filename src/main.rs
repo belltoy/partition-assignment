@@ -1,17 +1,16 @@
-use std::num::{NonZeroU8, NonZeroUsize};
+use std::num::{NonZeroU32, NonZeroU8};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use clap::{Parser, Subcommand};
 use clap_stdin::FileOrStdin;
 use serde::{Deserialize, Serialize};
 use log::debug;
-use anyhow::Error;
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Error, Result};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 struct Node(String);
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-struct Partition(u16);
+struct Partition(u32);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Assignment(BTreeMap<Partition, Vec<Node>>);
@@ -36,7 +35,7 @@ enum Command {
     Init {
         /// The number of partitions
         #[arg(short, long, default_value = "60")]
-        partitions: NonZeroUsize,
+        partitions: NonZeroU32,
 
         /// The replication factor
         #[arg(short, long, default_value = "3")]
@@ -97,7 +96,7 @@ enum Command {
     Validate {
         /// The number of partitions
         #[arg(short, long)]
-        partitions: NonZeroUsize,
+        partitions: NonZeroU32,
 
         /// The replication factor
         #[arg(short, long)]
@@ -145,7 +144,7 @@ fn init(nodes: &[Node], partitions: usize, replication_factor: usize) -> Assignm
     let assignment = n.windows(replication_factor)
         .take(partitions)
         .enumerate()
-        .map(|(i, nodes)| (Partition(i as u16 + 1), Vec::from(nodes)))
+        .map(|(i, nodes)| (Partition(i as u32 + 1), Vec::from(nodes)))
         .collect::<Assignment>();
 
     let nodes_map = assignment.nodes_map();
@@ -164,7 +163,7 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
     let mut moves = 0;
 
     if !assignment.0.iter().any(|(_p, ns)| ns.contains(&remove)) {
-        bail!("Node '{}' is not contained in the assignment", remove.0);
+        bail!("{remove} is not contained in the assignment");
     }
 
     let current_nodes = assignment.0.values().flatten().collect::<BTreeSet<_>>();
@@ -312,7 +311,7 @@ fn balance_boundary(mut assignment: Assignment, nodes_map: HashMap<Node, Vec<Par
     for p in n_ps.iter().rev() {
         if !lower.1.contains(&p) {
             // move p from upper to lower
-            debug!("Move partition {} from upper bound node {} to lower bound node {}", p.0, upper.0.0, lower.0.0);
+            debug!("Move {p} from upper bound node {} to lower bound node {}", upper.0.0, lower.0.0);
             assignment.0.entry(p.clone()).and_modify(|ns| {
                 for n in ns {
                     if n.0 == upper.0.0 {
@@ -388,7 +387,8 @@ fn print_partitions<'a, I>(partitions: I, prefix: Option<&str>)
             .map(|p| format!("{:>2}", p.0)).collect::<Vec<_>>().join(", "));
     }
 
-    println!("{prefix}upper: {}, lower: {}, Differ: {}", upper, lower, upper - lower);
+    println!("{prefix}");
+    println!("{prefix}upper: {upper}, lower: {lower}, Differ: {}", upper - lower);
 }
 
 impl Command {
@@ -422,7 +422,7 @@ impl Command {
 
         match self {
             Self::Init { partitions, replication_factor, nodes, output_format } => {
-                let assignment = init(&nodes[..], partitions.get(), replication_factor.get() as usize);
+                let assignment = init(&nodes[..], partitions.get() as usize, replication_factor.get() as usize);
                 match output_format {
                     OutputFormat::Json => {
                         println!("{}", serde_json::to_string_pretty(&assignment)?);
@@ -435,6 +435,9 @@ impl Command {
             }
             Self::Add { node, input, output_format, with_actions } => {
                 let assignment = input.contents()?;
+                if assignment.nodes_map().get(&node).is_some() {
+                    bail!("{node} already exists in the assignment");
+                }
                 let (new_assignment, moves) = add_node(assignment, node.clone())?;
                 match output_format {
                     OutputFormat::Json => {
@@ -480,7 +483,51 @@ impl Command {
                 }
             }
             Self::Validate { input, partitions, replication_factor, output_format } => {
+                let partitions = partitions.get() as usize;
+                let factor = replication_factor.get() as usize;
                 let assignment = input.contents()?;
+
+                for p in (1..=partitions as u32).map(From::from) {
+                    assignment.0.get(&p).ok_or_else(|| {
+                        anyhow!("{p} is missing")
+                    })
+                    .and_then(|ns| {
+                        let nodes_num = ns.len();
+                        if nodes_num != factor {
+                            bail!("{p} replicas on {nodes_num} nodes, but replication factor is {factor}");
+                        }
+                        let mut ns1 = ns.clone();
+                        ns1.dedup();
+
+                        if ns1.len() != nodes_num {
+                            let nodes_str = ns
+                                    .iter()
+                                    .map(|n| n.0.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                            bail!("{p} replicas on duplicate nodes: {nodes_str}");
+                        }
+                        Ok(())
+                    })?;
+
+                    let nodes_map = assignment.nodes_map();
+                    let nodes_num = nodes_map.len();
+                    let avg = (partitions * factor) as f64 / nodes_num as f64;
+                    let expect_lower = avg.floor() as usize;
+                    let expect_upper = avg.ceil() as usize;
+                    let expect = if expect_lower == expect_upper {
+                        format!("{}", expect_lower)
+                    } else {
+                        format!("[{}, {}]", expect_lower, expect_upper)
+                    };
+                    for (n, ps) in &nodes_map {
+                        let ps_num = ps.len();
+                        if ps_num < expect_lower || ps_num > expect_upper {
+                            bail!("{n} has {ps_num} partitions, but the balance number of partitions is {expect}");
+                        }
+                    }
+                }
+
                 match output_format {
                     OutputFormat::Json => {
                         println!("{}", serde_json::to_string_pretty(&assignment)?);
@@ -496,9 +543,27 @@ impl Command {
     }
 }
 
-impl<S: std::fmt::Display> From<S> for Node {
+impl<S: AsRef<str>> From<S> for Node {
     fn from(s: S) -> Self {
-        Self(s.to_string())
+        Self(s.as_ref().to_string())
+    }
+}
+
+impl std::fmt::Display for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Node({})", self.0)
+    }
+}
+
+impl std::fmt::Display for Partition {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Partition({})", self.0)
+    }
+}
+
+impl<N: Into<u32>> From<N> for Partition {
+    fn from(n: N) -> Self {
+        Self(n.into())
     }
 }
 
@@ -537,7 +602,7 @@ impl Assignment {
 
     fn ensure_contains_node(&self, node: &Node) -> Result<()> {
         if !self.contains_node(node) {
-            bail!("Node '{}' is not contained in the assignment", node.0);
+            bail!("{node} is not contained in the assignment");
         }
 
         Ok(())
