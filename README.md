@@ -212,6 +212,24 @@ Convert to Erlang format:
 ]
 ```
 
+Tips:
+
+```bash
+# List tables from the Erlang JSON output
+cat output.json | jq '.current_snapshot.table_distribution | map(.table_name) []' -r
+
+# Read the Erlang JSON output and read the current distribution of a table and format it for this tool:
+cat output.json | jq '.current_snapshot.table_distribution | map(select(.table_name == $table)) .[0].frag_dist | map({key: .frag_index | tostring, value: .instances}) | from_entries' --arg table dropnode
+cat output.json | jq '.current_snapshot.table_distribution | map(select(.table_name == $table)) .[0].frag_dist | map({key: .frag_index | tostring, value: .instances}) | from_entries' --arg table mqtt_session
+
+# Show current assignment
+cat output.json | jq '.current_snapshot.table_distribution | map(select(.table_name == $table)) .[0].frag_dist | map({key: .frag_index | tostring, value: .instances}) | from_entries' --arg table mqtt_session | assignment validate -r 2 -p 12
+# Remove node 3
+cat output.json | jq '.current_snapshot.table_distribution | map(select(.table_name == $table)) .[0].frag_dist | map({key: .frag_index | tostring, value: .instances}) | from_entries' --arg table mqtt_session | assignment remove -n 3 -r 2
+# Add node 9
+cat output.json | jq '.current_snapshot.table_distribution | map(select(.table_name == $table)) .[0].frag_dist | map({key: .frag_index | tostring, value: .instances}) | from_entries' --arg table mqtt_session | assignment add -n 9
+```
+
 ## Partition/Fragment assignment strategy or algorithm.
 
 A round-robin strategy is enough for a newly created table to balance the distribution.
