@@ -48,6 +48,10 @@ enum Command {
         /// The output format
         #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
         output_format: OutputFormat,
+
+        /// Whether to include the actions list in the JSON output
+        #[arg(short, long, default_value = "false")]
+        with_actions: bool,
     },
 
     /// Add a node to the assignment, and reassign partitions
@@ -118,6 +122,8 @@ struct Output {
 
     // #[serde(skip_serializing_if = "Option::is_none")]
     actions: Option<Vec<Action>>,
+
+    moves: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -421,11 +427,20 @@ impl Command {
         self.validate()?;
 
         match self {
-            Self::Init { partitions, replication_factor, nodes, output_format } => {
+            Self::Init { partitions, replication_factor, nodes, output_format, with_actions } => {
                 let assignment = init(&nodes[..], partitions.get() as usize, replication_factor.get() as usize);
                 match output_format {
                     OutputFormat::Json => {
-                        println!("{}", serde_json::to_string_pretty(&assignment)?);
+                        if with_actions {
+                            let out = Output {
+                                assignment,
+                                actions: vec![].into(),
+                                moves: 0,
+                            };
+                            println!("{}", serde_json::to_string_pretty(&out)?);
+                        } else {
+                            println!("{}", serde_json::to_string_pretty(&assignment)?);
+                        }
                     }
                     OutputFormat::Text => {
                         println!("==== Initialized Assignment: ====");
@@ -445,6 +460,7 @@ impl Command {
                             let out = Output {
                                 assignment: new_assignment,
                                 actions: vec![].into(),
+                                moves,
                             };
                             println!("{}", serde_json::to_string_pretty(&out)?);
                         } else {
@@ -469,6 +485,7 @@ impl Command {
                             let out = Output {
                                 assignment: new_assignment,
                                 actions: vec![].into(),
+                                moves,
                             };
                             println!("{}", serde_json::to_string_pretty(&out)?);
                         } else {

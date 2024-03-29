@@ -179,6 +179,8 @@ Or you can output the result in JSON:
 
 ## JSON Output Format
 
+Without actions:
+
 ```json
 {
   "1": [ "node_1", "node_2", "node_3" ],
@@ -191,6 +193,28 @@ Or you can output the result in JSON:
   "8": [ "node_3", "node_4", "node_5" ],
   "9": [ "node_4", "node_5", "node_1" ],
   "10": [ "node_5", "node_1", "node_2" ]
+}
+```
+
+With actions:
+```json
+{
+    "assignment": {
+          "1": [ "node_1", "node_2", "node_3" ],
+          "2": [ "node_2", "node_3", "node_4" ],
+          "3": [ "node_3", "node_4", "node_5" ],
+          "4": [ "node_4", "node_5", "node_1" ],
+          "5": [ "node_5", "node_1", "node_2" ],
+          "6": [ "node_1", "node_2", "node_3" ],
+          "7": [ "node_2", "node_3", "node_4" ],
+          "8": [ "node_3", "node_4", "node_5" ],
+          "9": [ "node_4", "node_5", "node_1" ],
+          "10": [ "node_5", "node_1", "node_2" ]
+    },
+
+    "actions": [],
+
+    "moves": 0
 }
 ```
 
@@ -312,8 +336,30 @@ std_dev: 0.00
 
 ```
 
-
 See also ![assignment](assignment.png)
+
+### Assignment Strategy Stability Test
+
+To verify how the strategy stability performs, there is a simple bash script for testing:
+
+```bash
+# Build the tool
+cargo build --release
+
+./test.sh
+```
+
+In this `test.sh`, the initial assignment parameters are hard-coded:
+
+- Replication Factor: 3
+- Partitions: 60
+- Initial Nodes: 5
+
+After generated the initial assigment, the test run 500 times to randomly remove a node and add it
+back.
+
+You can see all the count of moves in these 1000 times operations (500 removes and 500 adds) will
+never exceed the range \[36, 41].
 
 ## References
 
