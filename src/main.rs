@@ -196,7 +196,7 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
         .iter()
         .map(|(p, ns)| {
             let ns = ns.into_iter().filter(|n| n != &remove).cloned().collect::<Vec<_>>();
-            (p.clone(), ns.clone())
+            (p.clone(), ns)
         })
         .collect();
 
@@ -263,8 +263,7 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
                     .cycle()
                     .take(pps.len())
                     .zip(pps)
-                    .map(|(n, (p, ns))| {
-                        let mut ns = ns.clone();
+                    .map(|(n, (p, mut ns))| {
                         ns.push(n.clone());
                         moves_count += 1;
                         moves.push(Move {
@@ -272,7 +271,7 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
                             from: remove.clone(),
                             to: n.clone(),
                         });
-                        (p.clone(), ns)
+                        (p, ns)
                     });
 
                 f.extend(rest);
@@ -284,22 +283,24 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
 
                 break;
             } else {
-                let (p, ns) = pps.remove(0);
-                debug!(">>> pick: {:?}", group_key.first().unwrap());
+                let (p, mut ns) = pps.remove(0);
+                let (picked_node, picked_node_count) = group_key.first_mut().unwrap();
+                let picked_node = picked_node.clone();
+                *picked_node_count += 1;
+                debug!(">>> pick: {:?}", picked_node);
                 moves_count += 1;
                 moves.push(Move {
                     partition: p.clone(),
                     from: remove.clone(),
-                    to: group_key.first().unwrap().0.clone(),
+                    to: picked_node.clone(),
                 });
-                group_key.first_mut().unwrap().1 += 1;
-                let mut ns = ns.clone();
-                ns.push(group_key.first().unwrap().0.clone());
+
+                ns.push(picked_node);
 
                 // update rest groups
                 remains = remains.0.into_iter()
                     .filter(|(_p, ns)| !ns.contains(remove))
-                    .chain(Some((p.clone(), ns.clone())).into_iter()).collect();
+                    .chain(Some((p.clone(), ns)).into_iter()).collect();
             }
         }
         cal_groups(&remains, &mut groups);
