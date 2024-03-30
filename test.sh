@@ -17,11 +17,11 @@ result=$init
 for _i in $(seq 1 500); do
     remove_node=$(echo "$result" | jq '.assignment | to_entries | map(.value) | flatten | unique .[]' -r | shuf -n 1)
     result=$(echo "$result" | jq '.assignment' | $CMD remove -n "$remove_node" -r $replication_factor -o json -w)
-    moves=$(echo "$result" | jq '.moves' -r)
+    moves=$(echo "$result" | jq '.moves_count' -r)
     printf "Removed %8s,   moves: %3s\n" "$remove_node" "$moves"
 
     result=$(echo "$result" | jq '.assignment' | $CMD add -n "$remove_node" -o json -w)
-    moves=$(echo "$result" | jq '.moves' -r)
+    moves=$(echo "$result" | jq '.moves_count' -r)
     printf "Added   %8s,   moves: %3s\n" "$remove_node" "$moves"
 done
 

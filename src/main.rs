@@ -12,7 +12,7 @@ struct Node(String);
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 struct Partition(u32);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct Assignment(BTreeMap<Partition, Vec<Node>>);
 
 #[derive(Debug, Parser)]
@@ -116,18 +116,17 @@ enum Command {
     },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 struct Output {
     assignment: Assignment,
 
-    // #[serde(skip_serializing_if = "Option::is_none")]
-    actions: Option<Vec<Action>>,
+    moves: Vec<Move>,
 
-    moves: usize,
+    moves_count: usize,
 }
 
-#[derive(Debug, Serialize)]
-struct Action {
+#[derive(Debug, Clone, Serialize)]
+struct Move {
     partition: Partition,
     from: Node,
     to: Node,
@@ -154,19 +153,21 @@ fn init(nodes: &[Node], partitions: usize, replication_factor: usize) -> Assignm
         .collect::<Assignment>();
 
     let nodes_map = assignment.nodes_map();
-    balance_boundary(assignment, nodes_map, 0).0
+    balance_boundary(assignment, nodes_map, vec![], 0).0
 }
 
-fn add_node(assignment: Assignment, add: Node) -> Result<(Assignment, usize)> {
+fn add_node(assignment: Assignment, add: Node) -> Result<(Assignment, Vec<Move>, usize)> {
     let mut nodes_map = assignment.nodes_map();
+    let moves = vec![];
     nodes_map.entry(add.clone()).or_default();
-    Ok(balance_boundary(assignment, nodes_map, 0))
+    Ok(balance_boundary(assignment, nodes_map, moves, 0))
 }
 
 fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize)
-    -> Result<(Assignment, usize)>
+    -> Result<(Assignment, Vec<Move>, usize)>
 {
-    let mut moves = 0;
+    let mut moves_count = 0;
+    let mut moves = vec![];
 
     if !assignment.0.iter().any(|(_p, ns)| ns.contains(&remove)) {
         bail!("{remove} is not contained in the assignment");
@@ -265,7 +266,12 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
                     .map(|(n, (p, ns))| {
                         let mut ns = ns.clone();
                         ns.push(n.clone());
-                        moves += 1;
+                        moves_count += 1;
+                        moves.push(Move {
+                            partition: p.clone(),
+                            from: remove.clone(),
+                            to: n.clone(),
+                        });
                         (p.clone(), ns)
                     });
 
@@ -280,7 +286,12 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
             } else {
                 let (p, ns) = pps.remove(0);
                 debug!(">>> pick: {:?}", group_key.first().unwrap());
-                moves += 1;
+                moves_count += 1;
+                moves.push(Move {
+                    partition: p.clone(),
+                    from: remove.clone(),
+                    to: group_key.first().unwrap().0.clone(),
+                });
                 group_key.first_mut().unwrap().1 += 1;
                 let mut ns = ns.clone();
                 ns.push(group_key.first().unwrap().0.clone());
@@ -297,17 +308,22 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
     // If upper bound - lower bound > 1, then need to reassign, just move a partition from
     // the node with the most partitions to the node with the least partitions.
     let nodes_map = remains.nodes_map();
-    Ok(balance_boundary(remains, nodes_map, moves))
+    Ok(balance_boundary(remains, nodes_map, moves, moves_count))
 }
 
-fn balance_boundary(mut assignment: Assignment, nodes_map: HashMap<Node, Vec<Partition>>, mut moves: usize) -> (Assignment, usize) {
+fn balance_boundary(
+    mut assignment: Assignment,
+    nodes_map: HashMap<Node, Vec<Partition>>,
+    mut moves: Vec<Move>,
+    mut moves_count: usize
+) -> (Assignment, Vec<Move>, usize) {
     let mut nodes = nodes_map.iter().map(|(n, ps)| (n.clone(), ps.iter().cloned().collect::<Vec<_>>())).collect::<Vec<_>>();
     nodes.sort_by(|(_n1, ps1), (_n2, ps2)| {
         ps1.len().cmp(&ps2.len())
     });
 
     if nodes.last().unwrap().1.len() - nodes.first().unwrap().1.len() <= 1 {
-        return (assignment, moves);
+        return (assignment, moves, moves_count);
     }
 
     // find a partition on the upper bound node but the lower bound node doesn't have
@@ -321,17 +337,22 @@ fn balance_boundary(mut assignment: Assignment, nodes_map: HashMap<Node, Vec<Par
             assignment.0.entry(p.clone()).and_modify(|ns| {
                 for n in ns {
                     if n.0 == upper.0.0 {
-                        moves += 1;
+                        moves_count += 1;
+                        moves.push(Move {
+                            partition: p.clone(),
+                            from: upper.0.clone(),
+                            to: lower.0.clone(),
+                        });
                         *n = lower.0.clone();
                     }
                 }
             });
             let nodes_map = assignment.nodes_map();
-            return balance_boundary(assignment, nodes_map, moves);
+            return balance_boundary(assignment, nodes_map, moves, moves_count);
         }
     }
 
-    (assignment, moves)
+    (assignment, moves, moves_count)
 }
 
 fn cal_groups(assignment: &Assignment, groups: &mut Vec<(Vec<(Node, usize)>, Vec<(Partition, Vec<Node>)>)>) {
@@ -397,10 +418,22 @@ fn print_partitions<'a, I>(partitions: I, prefix: Option<&str>)
     println!("{prefix}upper: {upper}, lower: {lower}, Differ: {}", upper - lower);
 }
 
+fn print_moves(moves: &[Move]) {
+    println!("==== Moves: ====");
+    let mut sorted = moves.iter().collect::<Vec<_>>();
+    sorted.sort_by(|m1, m2| {
+        m1.partition.cmp(&m2.partition)
+    });
+    for m in sorted {
+        println!("Move {} from {} to {}", m.partition, m.from, m.to);
+    }
+}
+
 impl Command {
-    fn validate(&self) -> Result<(), Error> {
+    fn exec(self) -> Result<()> {
         match self {
-            Self::Init { partitions, replication_factor, nodes, .. } => {
+            Self::Init { partitions, replication_factor, nodes, output_format, with_actions } => {
+                let replication_factor = replication_factor.get() as usize;
                 if partitions.get() == 0 {
                     bail!("Partitions must not be zero");
                 }
@@ -409,34 +442,16 @@ impl Command {
                     bail!("Nodes must not be empty");
                 }
 
-                if nodes.len() < replication_factor.get() as usize {
+                if nodes.len() < replication_factor {
                     bail!("Nodes must be greater than or equal to replication factor");
                 }
-            }
-            Self::Add { .. } => {}
-            Self::Remove { .. } => {
-                // Don't read the input file here, as it will be read in exec()
-            }
-            Self::Validate { .. } => {}
-        }
 
-        Ok(())
-    }
+                let assignment = init(&nodes[..], partitions.get() as usize, replication_factor);
 
-    fn exec(self) -> Result<()> {
-        self.validate()?;
-
-        match self {
-            Self::Init { partitions, replication_factor, nodes, output_format, with_actions } => {
-                let assignment = init(&nodes[..], partitions.get() as usize, replication_factor.get() as usize);
                 match output_format {
                     OutputFormat::Json => {
                         if with_actions {
-                            let out = Output {
-                                assignment,
-                                actions: vec![].into(),
-                                moves: 0,
-                            };
+                            let out = Output { assignment, ..Default::default() };
                             println!("{}", serde_json::to_string_pretty(&out)?);
                         } else {
                             println!("{}", serde_json::to_string_pretty(&assignment)?);
@@ -453,49 +468,59 @@ impl Command {
                 if assignment.nodes_map().get(&node).is_some() {
                     bail!("{node} already exists in the assignment");
                 }
-                let (new_assignment, moves) = add_node(assignment, node.clone())?;
+
+                let (assignment, moves, moves_count) = add_node(assignment, node.clone())?;
+                assert!(moves.len() == moves_count);
+
                 match output_format {
                     OutputFormat::Json => {
                         if with_actions {
                             let out = Output {
-                                assignment: new_assignment,
-                                actions: vec![].into(),
+                                assignment,
                                 moves,
+                                moves_count,
                             };
                             println!("{}", serde_json::to_string_pretty(&out)?);
                         } else {
-                            println!("{}", serde_json::to_string_pretty(&new_assignment)?);
+                            println!("{}", serde_json::to_string_pretty(&assignment)?);
                         }
                     }
                     OutputFormat::Text => {
                         println!("==== After add node: {}, Assignment: ====", &node.0);
-                        new_assignment.print();
-                        println!("Moves: {}", moves);
+                        assignment.print();
+                        println!("Moves: {}", moves_count);
+                        print_moves(&moves);
                     }
                 }
             }
             Self::Remove { node, input, replication_factor, with_actions, output_format } => {
                 let assignment = input.contents()?;
-                assignment.validate(replication_factor.get() as usize)?;
+                let replication_factor = replication_factor.get() as usize;
+                assignment.validate(replication_factor)?;
                 assignment.ensure_contains_node(&node)?;
-                let (new_assignment, moves) = remove_node(&assignment, &node, replication_factor.get() as usize)?;
+
+                let partitions_on_remove = assignment.nodes_map().remove(&node).unwrap();
+                let (assignment, moves, moves_count) = remove_node(&assignment, &node, replication_factor)?;
+                assert!(moves.len() == moves_count);
                 match output_format {
                     OutputFormat::Json => {
                         if with_actions {
                             let out = Output {
-                                assignment: new_assignment,
-                                actions: vec![].into(),
+                                assignment,
                                 moves,
+                                moves_count,
                             };
                             println!("{}", serde_json::to_string_pretty(&out)?);
                         } else {
-                            println!("{}", serde_json::to_string_pretty(&new_assignment)?);
+                            println!("{}", serde_json::to_string_pretty(&assignment)?);
                         }
                     }
                     OutputFormat::Text => {
                         println!("==== After remove node: {}, Assignment: ====", &node.0);
-                        new_assignment.print();
-                        println!("Moves: {}", moves);
+                        assignment.print();
+                        println!("Moves: {}", moves_count);
+                        println!("Removed node: {node}, partitions: [{}]", partitions_on_remove.iter().map(|p| format!("{}", p.0)).collect::<Vec<_>>().join(", "));
+                        print_moves(&moves);
                     }
                 }
             }
