@@ -169,7 +169,7 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
     let mut moves_count = 0;
     let mut moves = vec![];
 
-    if !assignment.0.iter().any(|(_p, ns)| ns.contains(&remove)) {
+    if !assignment.0.iter().any(|(_p, ns)| ns.contains(remove)) {
         bail!("{remove} is not contained in the assignment");
     }
 
@@ -181,7 +181,7 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
     // partitions_on_remove: Partition => [Node]
     let partitions_on_remove = assignment.0
         .iter()
-        .filter(|(_p, ns)| ns.contains(&remove))
+        .filter(|(_p, ns)| ns.contains(remove))
         .map(|(p, ns)| {
             let ns = ns
                 .iter()
@@ -195,7 +195,7 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
     let mut remains: Assignment = assignment.0
         .iter()
         .map(|(p, ns)| {
-            let ns = ns.into_iter().filter(|n| n != &remove).cloned().collect::<Vec<_>>();
+            let ns = ns.iter().filter(|n| n != &remove).cloned().collect::<Vec<_>>();
             (p.clone(), ns)
         })
         .collect();
@@ -229,7 +229,7 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
     for (p, ns) in &partitions_on_remove {
         let alters = remains_nodes
             .iter()
-            .filter(|(_n, ps)| !ps.contains(&p))
+            .filter(|(_n, ps)| !ps.contains(p))
             .map(|(n, ps)| (n.clone(), ps.len()))
             .collect::<Vec<_>>();
         let v = groups.entry(alters).or_default();
@@ -250,7 +250,7 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
             debug!("======== group_key {:?} ========", group_key);
 
             group_key.sort_by(|(_n1, len1), (_n2, len2)| {
-                len1.cmp(&len2)
+                len1.cmp(len2)
             });
             let upper = group_key.last().unwrap().1;
             let lower = group_key.first().unwrap().1;
@@ -318,7 +318,7 @@ fn balance_boundary(
     mut moves: Vec<Move>,
     mut moves_count: usize
 ) -> (Assignment, Vec<Move>, usize) {
-    let mut nodes = nodes_map.iter().map(|(n, ps)| (n.clone(), ps.iter().cloned().collect::<Vec<_>>())).collect::<Vec<_>>();
+    let mut nodes = nodes_map.iter().map(|(n, ps)| (n.clone(), ps.to_vec())).collect::<Vec<_>>();
     nodes.sort_by(|(_n1, ps1), (_n2, ps2)| {
         ps1.len().cmp(&ps2.len())
     });
@@ -330,9 +330,9 @@ fn balance_boundary(
     // find a partition on the upper bound node but the lower bound node doesn't have
     let upper = nodes.last().unwrap();
     let lower = nodes.first().unwrap();
-    let n_ps = nodes_map.get(&upper.0).unwrap().iter().cloned().collect::<Vec<_>>();
+    let n_ps = nodes_map.get(&upper.0).unwrap().to_vec();
     for p in n_ps.iter().rev() {
-        if !lower.1.contains(&p) {
+        if !lower.1.contains(p) {
             // move p from upper to lower
             debug!("Move {p} from upper bound node {} to lower bound node {}", upper.0.0, lower.0.0);
             assignment.0.entry(p.clone()).and_modify(|ns| {
@@ -356,7 +356,11 @@ fn balance_boundary(
     (assignment, moves, moves_count)
 }
 
-fn cal_groups(assignment: &Assignment, groups: &mut Vec<(Vec<(Node, usize)>, Vec<(Partition, Vec<Node>)>)>) {
+type GroupKey = Vec<(Node, usize)>;
+type GroupValue = Vec<(Partition, Vec<Node>)>;
+type Groups = Vec<(GroupKey, GroupValue)>;
+
+fn cal_groups(assignment: &Assignment, groups: &mut Groups) {
     let mut remains_nodes: BTreeMap<Node, Vec<_>> = Default::default();
     for (p, ns) in &assignment.0 {
         for n in ns {
@@ -520,7 +524,11 @@ impl Command {
                         println!("==== After remove node: {}, Assignment: ====", &node.0);
                         assignment.print();
                         println!("Moves: {}", moves_count);
-                        println!("Removed node: {node}, partitions: [{}]", partitions_on_remove.iter().map(|p| format!("{}", p.0)).collect::<Vec<_>>().join(", "));
+                        let s = partitions_on_remove
+                            .iter()
+                            .map(|p| format!("{}", p.0))
+                            .collect::<Vec<_>>().join(", ");
+                        println!("Removed node: {node}, partitions: [{s}]");
                         print_moves(&moves);
                     }
                 }
