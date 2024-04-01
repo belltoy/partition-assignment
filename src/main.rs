@@ -52,6 +52,10 @@ enum Command {
         /// Whether to include the actions list in the JSON output
         #[arg(short, long, default_value = "false")]
         with_actions: bool,
+
+        /// Partitions start with 0 or 1
+        #[arg(short = '0', long, default_value = "false")]
+        starts_with_zero: bool,
     },
 
     /// Add a node to the assignment, and reassign partitions
@@ -140,7 +144,12 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn init(nodes: &[Node], partitions: usize, replication_factor: usize) -> Assignment {
+fn init(
+    nodes: &[Node],
+    partitions: usize,
+    replication_factor: usize,
+    starts_with_zero: bool,
+) -> Assignment {
     let n = nodes.iter().cycle()
         .take(partitions * replication_factor)
         .cloned()
@@ -149,7 +158,14 @@ fn init(nodes: &[Node], partitions: usize, replication_factor: usize) -> Assignm
     let assignment = n.windows(replication_factor)
         .take(partitions)
         .enumerate()
-        .map(|(i, nodes)| (Partition(i as u32 + 1), Vec::from(nodes)))
+        .map(|(i, nodes)| {
+            let partition_id = if starts_with_zero {
+                i as u32
+            } else {
+                i as u32 + 1
+            };
+            (Partition(partition_id), Vec::from(nodes))
+        })
         .collect::<Assignment>();
 
     let nodes_map = assignment.nodes_map();
@@ -437,7 +453,14 @@ fn print_moves(moves: &[Move]) {
 impl Command {
     fn exec(self) -> Result<()> {
         match self {
-            Self::Init { partitions, replication_factor, nodes, output_format, with_actions } => {
+            Self::Init {
+                partitions,
+                replication_factor,
+                nodes,
+                output_format,
+                with_actions,
+                starts_with_zero,
+            } => {
                 let replication_factor = replication_factor.get() as usize;
                 if partitions.get() == 0 {
                     bail!("Partitions must not be zero");
@@ -451,7 +474,12 @@ impl Command {
                     bail!("Nodes must be greater than or equal to replication factor");
                 }
 
-                let assignment = init(&nodes[..], partitions.get() as usize, replication_factor);
+                let assignment = init(
+                    &nodes[..],
+                    partitions.get() as usize,
+                    replication_factor,
+                    starts_with_zero,
+                );
 
                 match output_format {
                     OutputFormat::Json => {
