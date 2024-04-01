@@ -334,6 +334,10 @@ fn balance_boundary(
     mut moves: Vec<Move>,
     mut moves_count: usize
 ) -> (Assignment, Vec<Move>, usize) {
+    if nodes_map.len() <= 1 {
+        return (assignment, moves, moves_count);
+    }
+
     let mut nodes = nodes_map.iter().map(|(n, ps)| (n.clone(), ps.to_vec())).collect::<Vec<_>>();
     nodes.sort_by(|(_n1, ps1), (_n2, ps2)| {
         ps1.len().cmp(&ps2.len())
