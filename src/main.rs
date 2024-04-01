@@ -9,7 +9,7 @@ use anyhow::{anyhow, bail, Error, Result};
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 struct Node(String);
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 struct Partition(u32);
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -204,7 +204,7 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
                 .filter(|&n| n != remove)
                 .cloned()
                 .collect::<Vec<_>>();
-            (p.clone(), ns)
+            (*p, ns)
         })
         .collect::<BTreeMap<_, _>>();
 
@@ -212,7 +212,7 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
         .iter()
         .map(|(p, ns)| {
             let ns = ns.iter().filter(|n| n != &remove).cloned().collect::<Vec<_>>();
-            (p.clone(), ns)
+            (*p, ns)
         })
         .collect();
 
@@ -222,7 +222,7 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
         for n in ns {
             if n != remove {
                 let v = remains_nodes.entry(n.clone()).or_default();
-                v.insert(p.clone());
+                v.insert(*p);
             }
         }
     }
@@ -236,7 +236,7 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
     for (p, ns) in &partitions_on_remove {
         for n in ns {
             let v = px.entry(n).or_default();
-            v.push(p.clone());
+            v.push(*p);
         }
     }
 
@@ -249,7 +249,7 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
             .map(|(n, ps)| (n.clone(), ps.len()))
             .collect::<Vec<_>>();
         let v = groups.entry(alters).or_default();
-        v.push((p.clone(), ns.clone()));
+        v.push((*p, ns.clone()));
     }
 
     let mut groups = groups.into_iter().collect::<Vec<_>>();
@@ -283,7 +283,7 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
                         ns.push(n.clone());
                         moves_count += 1;
                         moves.push(Move {
-                            partition: p.clone(),
+                            partition: p,
                             from: remove.clone(),
                             to: n.clone(),
                         });
@@ -306,7 +306,7 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
                 debug!(">>> pick: {:?}", picked_node);
                 moves_count += 1;
                 moves.push(Move {
-                    partition: p.clone(),
+                    partition: p,
                     from: remove.clone(),
                     to: picked_node.clone(),
                 });
@@ -316,7 +316,7 @@ fn remove_node(assignment: &Assignment, remove: &Node, replication_factor: usize
                 // update rest groups
                 remains = remains.0.into_iter()
                     .filter(|(_p, ns)| !ns.contains(remove))
-                    .chain(Some((p.clone(), ns)).into_iter()).collect();
+                    .chain(Some((p, ns)).into_iter()).collect();
             }
         }
         cal_groups(&remains, &mut groups);
@@ -350,17 +350,17 @@ fn balance_boundary(
     // find a partition on the upper bound node but the lower bound node doesn't have
     let upper = nodes.last().unwrap();
     let lower = nodes.first().unwrap();
-    let n_ps = nodes_map.get(&upper.0).unwrap().to_vec();
+    let n_ps = &upper.1[..];
     for p in n_ps.iter().rev() {
         if !lower.1.contains(p) {
             // move p from upper to lower
             debug!("Move {p} from upper bound node {} to lower bound node {}", upper.0.0, lower.0.0);
-            assignment.0.entry(p.clone()).and_modify(|ns| {
+            assignment.0.entry(*p).and_modify(|ns| {
                 for n in ns {
                     if n.0 == upper.0.0 {
                         moves_count += 1;
                         moves.push(Move {
-                            partition: p.clone(),
+                            partition: *p,
                             from: upper.0.clone(),
                             to: lower.0.clone(),
                         });
@@ -385,7 +385,7 @@ fn cal_groups(assignment: &Assignment, groups: &mut Groups) {
     for (p, ns) in &assignment.0 {
         for n in ns {
             let v = remains_nodes.entry(n.clone()).or_default();
-            v.push(p.clone());
+            v.push(*p);
         }
     }
 
@@ -700,7 +700,7 @@ impl Assignment {
         for (p, ns) in &self.0 {
             for n in ns {
                 let v = nodes_map.entry(n.clone()).or_default();
-                v.push(p.clone());
+                v.push(*p);
             }
         }
 
