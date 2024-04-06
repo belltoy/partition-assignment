@@ -9,8 +9,8 @@ An assignment tool for partitioning and replicating data across nodes.
 Usage: assignment <COMMAND>
 
 Commands:
-  init      Initialize the assignment
-  add       Add a node to the assignment, and reassign partitions
+  init      Initialize the assignment by providing nodes, partition number and replication factor
+  add       Add a node or multiple nodes to the assignment, and reassign partitions
   remove    Remove a node from the assignment, and reassign partitions
   validate  Validate the assignment
   help      Print this message or the help of the given subcommand(s)
@@ -19,9 +19,8 @@ Options:
   -h, --help     Print help
   -V, --version  Print version
 
-
 > assignment init -h
-Initialize the assignment
+Initialize the assignment by providing nodes, partition number and replication factor
 
 Usage: assignment init [OPTIONS]
 
@@ -34,11 +33,14 @@ Options:
           The nodes to assign these partitions to, in comma-separated format
   -o, --output-format <OUTPUT_FORMAT>
           The output format [default: text] [possible values: json, text]
+  -w, --with-actions
+          Whether to include the actions list in the JSON output
+  -0, --starts-with-zero
+          Partitions start with 0 or 1
   -h, --help
           Print help
   -V, --version
           Print version
-
 
 > assignment remove -h
 Remove a node from the assignment, and reassign partitions
@@ -47,13 +49,13 @@ Usage: assignment remove [OPTIONS] --node <NODE> --replication-factor <REPLICATI
 
 Options:
   -n, --node <NODE>
-          Node to remove
+          The node to remove
   -r, --replication-factor <REPLICATION_FACTOR>
           The replication factor
   -i, --input <INPUT>
-          The existing assignment file [default: -]
+          The existing assignment file, "-" means reading from STDIN [default: -]
   -w, --with-actions
-          Whether to print the actions
+          Whether to include the actions list in the JSON output
   -o, --output-format <OUTPUT_FORMAT>
           The output format [default: text] [possible values: json, text]
   -h, --help
@@ -63,16 +65,14 @@ Options:
 
 
 > assignment add -h
-Add a node to the assignment, and reassign partitions
+Add a node or multiple nodes to the assignment, and reassign partitions
 
-Usage: assignment add [OPTIONS] --node <NODE> <INPUT>
-
-Arguments:
-  <INPUT>  The existing assignment file
+Usage: assignment add [OPTIONS]
 
 Options:
-  -n, --node <NODE>                    Node to add
-  -w, --with-actions                   Whether to print the actions
+  -n, --nodes <NODES>                  Nodes to add, in comma-separated format
+  -i, --input <INPUT>                  The existing assignment file, "-" means reading from STDIN [default: -]
+  -w, --with-actions                   Whether to include the actions list in the JSON output
   -o, --output-format <OUTPUT_FORMAT>  The output format [default: text] [possible values: json, text]
   -h, --help                           Print help
   -V, --version                        Print version
@@ -84,11 +84,18 @@ Validate the assignment
 Usage: assignment validate [OPTIONS] --partitions <PARTITIONS> --replication-factor <REPLICATION_FACTOR>
 
 Options:
-  -p, --partitions <PARTITIONS>                  The number of partitions
-  -r, --replication-factor <REPLICATION_FACTOR>  The replication factor
-  -i, --input <INPUT>                            The existing assignment file [default: -]
-  -h, --help                                     Print help
-  -V, --version                                  Print version
+  -p, --partitions <PARTITIONS>
+          The number of partitions
+  -r, --replication-factor <REPLICATION_FACTOR>
+          The replication factor
+  -i, --input <INPUT>
+          The existing assignment file, "-" means reading from STDIN [default: -]
+  -o, --output-format <OUTPUT_FORMAT>
+          The output format [default: text] [possible values: json, text]
+  -h, --help
+          Print help
+  -V, --version
+          Print version
 ```
 
 For example:
@@ -355,7 +362,7 @@ In this `test.sh`, the initial assignment parameters are hard-coded:
 - Partitions: 60
 - Initial Nodes: 5
 
-After generated the initial assigment, the test run 500 times to randomly remove a node and add it
+After generated the initial assignment, the test run 500 times to randomly remove a node and add it
 back.
 
 You can see all the count of moves in these 1000 times operations (500 removes and 500 adds) will
